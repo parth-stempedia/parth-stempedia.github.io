@@ -27,4 +27,5 @@ class Scratch3Text2SpeechBlocks {
     return args.ONE === args.TWO;
   }
 }
-module.exports = Scratch3Text2SpeechBlocks;
+Scratch.extensions.register(new Scratch3Text2SpeechBlocks());
+// module.exports = Scratch3Text2SpeechBlocks;
