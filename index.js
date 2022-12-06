@@ -1,4 +1,7 @@
 class Scratch3Text2SpeechBlocks {
+  constructor(){
+    console.log(global)
+  }
   getInfo() {
     return {
       id: 'strictequalityexample', // change this if you make an actual extension!
