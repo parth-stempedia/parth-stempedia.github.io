@@ -1,38 +1,92 @@
-// //To access web bluetooth api
+//To access web bluetooth api
 const ble = navigator.bluetooth;
 import boards from "./board-config.js";
 // const boards = require('./board-config').default;
 // const ProcessData = require('./process-data').default;
 
-// /**
-//  * A time interval to wait (in milliseconds) while a block that sends a BLE message is running.
-//  * @type {number}
-//  */
+ /**
+  * A time interval to wait (in milliseconds) while a block that sends a BLE message is running.
+  * @type {number}
+  */
 const BLESendInterval = 1000;
 
 var isServerConnected = false;
 var bleInstance;
-const ws = new WebSocket("ws://localhost");
-ws.addEventListener("open", () =>{
-  console.log("Connection in Client has been opened!!");
-  bleInstance = new BLEWrapper();
-  isServerConnected = true;
-});
-ws.addEventListener('message', function (event) {
-  console.log("Recieved message from PictoBlox");
-  const messageObject = JSON.parse(event.data);
-    switch(messageObject.type){
-      //Here all the cases will be handled according to the event received...
-      case "setBoard":
-        bleInstance.setBoard(messageObject.board);
-
+var ws = new WebSocket("ws://localhost:5000");
+attachListenersToWS(ws);
+var wasSocketEverActive =false;
+function attachListenersToWS(ws)
+{
+    ws.addEventListener("open", () =>{
+        console.log("Connection in Client has been opened!!");
+        document.getElementById("connectionStatus").innerHTML = "<p>Connection with PictoBlox has been established..</p>"
+        bleInstance = new BLEWrapper();
+        isServerConnected = true;
+      });
+    ws.addEventListener('message', function (event) {
+        console.log("Recieved message from PictoBlox");
+        const messageObject = JSON.parse(event.data);
+          switch(messageObject.type){
+            //Here all the cases will be handled according to the event received...
+            case "setBoard":
+              bleInstance.setBoard(messageObject.board);
+              document.getElementById("currentBoard").innerHTML = `<p>Selected Board : ${messageObject.board}</p>`;
+              break;
+            case "sendDataToBoard":
+              bleInstance.writeDataOnBle(messageObject.data);
+              break;
+            case "disconnectBLE":
+              bleInstance.disconnectBleConnectedPort();
+              break;
+      
+          }
+      });
+      ws.addEventListener("close", function(event){
+        console.log("Connection has been closed");
+        if(bleInstance)
+        bleInstance.disconnectBleConnectedPort();
+        if(wasSocketEverActive)
+        window.alert("Connection has been closed!!");
+      })
+}
+function checkForServer(connectionType){
+    try{
+        if(ws.readyState == 0)
+        {
+          console.log("trying for",connectionType,ws.readyState);
+          return  setTimeout(()=>{
+              return checkForServer("existingSocket");
+            },2000);
+        }
+        else if(ws.readyState == 2 || ws.readyState==3)
+        {
+            console.log("closing ",connectionType,ws.readyState);
+            ws.close();
+            ws = new WebSocket("ws://localhost:5000");
+            attachListenersToWS(ws);  
+            wasSocketEverActive = false;
+            checkForServer("newSocket");
+        }
+        else
+        {
+            console.log("Connection with PictoBlox established");
+            wasSocketEverActive = true;
+        }
     }
-});
+    catch(err)
+    {
+        console.log(err);
+        setTimeout(()=>{
+            checkForServer();
+        },10000);
+    }
+}
+checkForServer("newSocket");
 class BLEWrapper {
     constructor() {
         this._board = boards.None;
         this.Board2IdMapper = {
-            'quarky': {
+            'Quarky': {
                 'service': 0xf005,
                 'read': '5261da01-fa7e-42ab-850b-7c80220097cc',
                 'write': '5261da02-fa7e-42ab-850b-7c80220097cc'
@@ -91,6 +145,16 @@ class BLEWrapper {
         // let event = new CustomEvent(type, {detail:data});
         // window.dispatchEvent(event);
         //Here every event will be sent to server...
+        try{
+            if(ws.readyState!=1)
+                return checkForServer("newSocket");
+            ws.send(JSON.stringify({type:type,data:data}));
+        }
+        catch(e){
+            console.log("Disconnected from PictoBlox");
+            return checkForServer("existingSocket");
+        }
+        
     }
 
     /**
@@ -107,6 +171,11 @@ class BLEWrapper {
      * @param {Array} serviceIDList - List of available service ID for the peripheral
     */
     scan() {
+        if(this._board == "None")
+        {
+            window.alert("Please Select the board first in PictoBlox");
+            return;
+        }
         this._onConnect();
     }
 
@@ -115,7 +184,7 @@ class BLEWrapper {
      * @private
      */
     _onConnect() {
-        const serviceId = this.Board2IdMapper["quarky"]['service'];
+        const serviceId = this.Board2IdMapper[this._board]['service'];
         ble.requestDevice({
             filters: [{
                 services: [serviceId],
@@ -128,6 +197,7 @@ class BLEWrapper {
         })
         .then(server => {
             BLEWrapper.sendEvent('BLUETOOTH_PORT_CONNECTED')
+            document.getElementById("boardconnectionStatus").innerHTML =  `<p>Board Connection Status : Connected</p>`
             return server.getPrimaryService(serviceId)
         })
         .then(service => {
@@ -150,6 +220,8 @@ class BLEWrapper {
     disconnectBleConnectedPort() {
         this.readCharacteristic.removeEventListener('characteristicvaluechanged',this.handleReadListener);
         this.bleConnectedPort.gatt.disconnect();
+        document.getElementById("boardconnectionStatus").innerHTML =  `<p>Board Connection Status : Not Connected</p>`
+        if(ws)
         BLEWrapper.sendEvent('BLUETOOTH_PORT_DISCONNECTED');
     }
 
@@ -169,7 +241,6 @@ class BLEWrapper {
         // Set a busy flag so that while we are sending a message and waiting for
         // the response, additional messages are ignored.
         this._busy = true;
-        console.log(message);
         // Set a timeout after which to reset the busy flag. This is used in case
         // a BLE message was sent for which we never received a response, because
         // e.g. the peripheral was turned off after the message was sent. We reset
@@ -179,8 +250,12 @@ class BLEWrapper {
         }, BLESendInterval);
         const writeServiceUuid = this.Board2IdMapper[this._board]['write'];
         this.service.getCharacteristic(writeServiceUuid).then((writeCharacteristic) => {
-            const data = Buffer.from(message);
-            return writeCharacteristic.writeValue(data)
+            //const data = Buffer.from(message);
+            const view = new Uint8Array(message.length);
+            for(var i=0;i<message.length;i++)
+            view[i] = message[i];
+            console.log(view);
+            return writeCharacteristic.writeValue(view)
             .then(() => {
                 this._busy = false;
                 window.clearTimeout(this._busyTimeoutID);
@@ -253,8 +328,13 @@ class BLEWrapper {
     }
 }
 window.startScanning = function startScanning() {
+    if(ws.readyState!=1)
+    {
+        window.alert("PictoBlox has not yet been connected!!");
+        return;
+    }
     console.log("The client wants to connect to a device. Start Scanning");
-   bleInstance.scan();
+    bleInstance.scan();
   }
 // function myfunction2(event){
 //     if(isServerConnected)
