@@ -9,7 +9,7 @@ import boards from "./board-config.js";
   * @type {number}
   */
 const BLESendInterval = 1000;
-
+var frameInterval;
 var isServerConnected = false;
 var bleInstance;
 var ws = new WebSocket("ws://localhost:5000");
@@ -43,6 +43,7 @@ function attachListenersToWS(ws)
       });
       ws.addEventListener("close", function(event){
         console.log("Connection has been closed");
+        clearInterval(frameInterval);
         if(bleInstance)
         bleInstance.disconnectBleConnectedPort();
         if(wasSocketEverActive)
@@ -336,6 +337,40 @@ window.startScanning = function startScanning() {
     console.log("The client wants to connect to a device. Start Scanning");
     bleInstance.scan();
   }
+  const getFrame = () => {
+    var video = document.querySelector('video');
+    const canvas = document.createElement('canvas');
+    canvas.width = video.videoWidth;
+    canvas.height = video.videoHeight;
+    console.log(video.width,video.videoHeight)
+    canvas.getContext('2d').drawImage(video, 0, 0);
+    const data = canvas.toDataURL('image/png');
+    return data;
+}
+  window.startCamera = function startCamera(){
+    var video = document.querySelector('video'); 
+    navigator.mediaDevices.getUserMedia({video: {width: 426, height: 240}}).then((stream) => video.srcObject = stream);
+}
+window.sendFrames = ()=>{
+    try{
+        if(ws.readyState!=1)
+        {
+            clearInterval(frameInterval);
+            return checkForServer("newSocket");
+        }
+        frameInterval = setInterval(()=>{
+                console.log("Sending Frame to PictoBlox");
+                ws.send(JSON.stringify({type:"SEND_FRAMES_TO_PICTOBLOX",data:getFrame()}));
+            },(1000/30))
+    }
+    catch(e){
+        console.log("Disconnected from PictoBlox");
+        return checkForServer("existingSocket");
+    }
+}
+window.stopSendingFrames = ()=>{
+    clearInterval(frameInterval);
+}
 // function myfunction2(event){
 //     if(isServerConnected)
 //       ws.send(event.target.value);
