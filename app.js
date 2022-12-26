@@ -361,7 +361,7 @@ window.sendFrames = ()=>{
         frameInterval = setInterval(()=>{
                 console.log("Sending Frame to PictoBlox");
                 ws.send(JSON.stringify({type:"SEND_FRAMES_TO_PICTOBLOX",data:getFrame()}));
-            },(0))
+            },(100))
     }
     catch(e){
         console.log("Disconnected from PictoBlox");
